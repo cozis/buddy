@@ -1,45 +1,212 @@
+/*
+ * Bit stuff required to understand the code:
+ *
+ *     1. Division and multiplication using shifts
+ *
+ *        It is possible to perform multiplication and division by
+ *        a power of 2 using shift operations.
+ *
+ *        Starting by the simple case, the binary representation
+ *        of 1 and 2 is:
+ *
+ *            x = 0000 0001
+ *            y = 0000 0010
+ *
+ *        So 2 is 1 shifted left by 1. It's pretty intuitive that
+ *        this works for any power of 2. Shifting left by 1 equals
+ *        multiplying by 2. Shifting by more than 1 has the effect
+ *        of multiplying by a power of 2 with the shift amount as
+ *        exponent.
+ *
+ *        For values that aren't powers of 2, we can see them as
+ *        sums of such powers:
+ *
+ *            453 = 0000 0001 1100 0101
+ *                = 2^0 + 2^2 + 2^6 + 2^7 + 2^8
+ *                = (1 << 0) + (1 << 2) + (1 << 6) + (1 << 7) + (1 << 8)
+ *
+ *        Multiplying by 2, each power of 2 that makes up the value
+ *        shifts by 1, making the entire value shift too. Here is
+ *        the proof:
+ *        
+ *            2 * 453 = 2 * (2^0 + 2^2 + 2^6 + 2^7 + 2^8)
+ *                    = 2 * ((1 << 0) + (1 << 2) + (1 << 6) + (1 << 7) + (1 << 8))
+ *                    = ((1 << 0) + (1 << 2) + (1 << 6) + (1 << 7) + (1 << 8)) << 1
+ *                    = (1 << (0 + 1)) + (1 << (2 + 1)) + (1 << (6 + 1)) + (1 << (7 + 1)) + (1 << (8 + 1))
+ *                    = ((1 << 1) + (1 << 3) + (1 << 7) + (1 << 8) + (1 << 9))
+ *                    = 0000 0011 1000 1010
+ *        
+ *        So this works for all values. Similarly, shifting right
+ *        divides by 2.
+ *
+ *
+ *     2. Modulo using bitwise ands
+ * 
+ *        The modulo operator returns the remainder of the division:
+ * 
+ *            104 % 10 = 4
+ * 
+ *        When the right operand is a power of the base the two numbers
+ *        are represented in, getting the result is easy. In base 10 this
+ *        works when the right operand is 10, 100, 1000, etc. If N is the
+ *        number of zeros of the right operand, the remainder is the number
+ *        made by the lower N digits of the left operand. For instance:
+ * 
+ *            435430598 % 1000 = 598
+ *        
+ *        This works the same way in base 2 when the right operand is a
+ *        power of 2:
+ *        
+ *            10001011010 % 100 = 10
+ *            10001011010 % 10000 = 1010
+ *        
+ *        In base 2 getting the lower N digits is very easy and can be
+ *        done using a mask with a bitwise and operation. The mask can
+ *        be calculate subtracting 1 by the right operand:
+ *
+ *            100-1 = 011
+ *            10000-1 = 01111
+ * 
+ *        So finally, when the right operand is a power of 2:
+ * 
+ *            x % y == x & (y - 1)
+ *
+ *
+ *     3. Check if a word is a power of 2.  A power of 2 has only
+ *        one high bit:
+ * 
+ *            x = 0000 0100
+ * 
+ *        Subtracting 1 from it will result in the only high bit to
+ *        become 0 and all of the lower 0 to become 1.
+ *        to become 1 and:
+ * 
+ *            y = x - 1 = 0000 0011
+ * 
+ *        This makes it so x and y share no high bits and the 
+ *        bitwise "and" operation is 0.
+ * 
+ *        On the other hand, for something other than a power of 2
+ *        at least 2 bits are high. Subtracting 1 will lower the least
+ *        significant bit but keep the most significant ones:
+ * 
+ *            z = 0100 0100
+ *            w = z - 1 = 0100 0011
+ * 
+ *        So z and w will share at least one high bit. The bitwise
+ *        "and" operation is never zero for something that's not a
+ *        power of 2.
+ * 
+ *        In conclusion, we can test a power of 2 using:
+ * 
+ *            n & (n - 1) == 0
+ * 
+ * 
+ *     4. Aligning to power of 2 boundary
+ * 
+ *        Given an integer x, we call it "aligned to y" when it's
+ *        a multiple of y. Sometimes we need a way to calculate
+ *        the first integer aligned to a boundary that comes a
+ *        given number.
+ * 
+ *        Calculating ho far the integer is from the last boundary
+ *        is possible using the modulo operator
+ * 
+ *            delta_from_last_boundary = x % boundary
+ *        
+ *        therefore we can calculate the distance from the following
+ *        boundary by doing:
+ * 
+ *            delta_from_next_boundary = boundary - delta_from_last_boundary
+ *                                     = boundary - x % boundary
+ * 
+ *        There is also one other and faster way. Lets say x is a
+ *        positive number lower than boundary, therefore the last
+ *        boundary is 0 and the next is boundary exactly.
+ * 
+ *                                     last boundary
+ *                                     |          next boundary
+ *                                     v          v
+ *            - -- --- -----+----------+-------x--+----- --- -- -
+ *                         -B          0          B
+ * 
+ *        Negating x, the distance from the two boundaries is inverted:
+ *
+ *                          last boundary
+ *                          |          next boundary
+ *                          v          v
+ *            - -- --- -----+--y-------+----------+----- --- -- -
+ *                         -B          0          B
+ * 
+ *                                   y = -x
+ * 
+ *        So we can get the distance from the next boundary from x
+ *        calculating the modulo on -x.
+ * 
+ *            delta_from_next_boundary = -x % boundary
+ * 
+ *        When the boundary is a power of 2, the modulo can be calculated
+ *        using a bitwise and:
+ * 
+ *            delta_from_next_boundart = -x & (boundary - 1)
+ */
+
 #include <assert.h>
+#include <string.h>
 #include <stdbool.h>
+
+#define BUDDY_DEBUG
+#ifdef BUDDY_DEBUG
+#include <stdio.h>
+#endif
+
 #include "buddy.h"
 
-enum {
-    INDEX_256B,
-    INDEX_512B,
-    INDEX_1K,
-    INDEX_2K,
-    INDEX_4K,
-};
+#define MAX_BLOCK_LOG2 BUDDY_ALLOC_MAX_BLOCK_LOG2
+#define MIN_BLOCK_LOG2 BUDDY_ALLOC_MIN_BLOCK_LOG2
+#define MAX_BLOCK_SIZE (1 << MAX_BLOCK_LOG2)
+#define MIN_BLOCK_SIZE (1 << MIN_BLOCK_LOG2)
+#define MAX_BLOCK_ALIGN_MASK (MAX_BLOCK_SIZE - 1)
 
 struct page {
     struct page *next;
 };
 
-void init_buddy_alloc(struct buddy_alloc *alloc,
-                      char *base, size_t size,
-                      uint32_t *bitsets,
-                      int num_bitsets)
+static struct page*
+page_index_to_ptr(char *base, int i)
 {
-    size_t page_size = 1 << 12;
+    return (struct page*) (base + (i << MAX_BLOCK_LOG2));
+}
+
+static struct buddy_alloc startup_empty()
+{
+    struct buddy_alloc alloc;
+    alloc.base = NULL;
+    alloc.info = NULL;
+    alloc.num_info = 0;
+    for (int i = 0; i < BUDDY_ALLOC_NUM_LISTS; i++)
+        alloc.lists[i] = NULL;
+    return alloc;
+}
+
+struct buddy_alloc buddy_startup(char *base, size_t size,
+                                 struct page_info *info,
+                                 int num_info)
+{
+    if (base == NULL || info == NULL)
+        return startup_empty();
 
     /*
      * Ad some padding to the start of the
      * memory pool to align at a page boundary.
      */
-    size_t pad = -(uintptr_t) base & (page_size - 1);
+    size_t pad = -(uintptr_t) base & MAX_BLOCK_ALIGN_MASK;
 
     if (pad > size) {
         /*
-         * Pool doesn't have a whole page
+         * Pool doesn't even have a page
          */
-        alloc->base = NULL;
-        alloc->lists[INDEX_256B] = NULL;
-        alloc->lists[INDEX_512B] = NULL;
-        alloc->lists[INDEX_1K] = NULL;
-        alloc->lists[INDEX_2K] = NULL;
-        alloc->lists[INDEX_4K] = NULL;
-        alloc->bitsets = NULL;
-        alloc->num_bitsets = 0;
-        return;
+        return startup_empty();
     }
 
     base += pad;
@@ -48,45 +215,44 @@ void init_buddy_alloc(struct buddy_alloc *alloc,
     /*
      * Make the size a multiple of 4K
      */
-    size_t rem = size % page_size;
-
+    size_t rem = size & MAX_BLOCK_ALIGN_MASK;
     size -= rem;
 
     /*
      * Each page requires a bitset to keep track of its state
      */
-    size_t max_bytes = (size_t) num_bitsets * page_size;
+    size_t max_bytes = (size_t) num_info << MAX_BLOCK_LOG2;
     if (size > max_bytes)
         size = max_bytes;
 
     /*
      * Make the linked list of pages
      */
-    struct page *head;
+    struct page *head = NULL;
     struct page **tail = &head;
-    size_t num_pages = size / page_size;
-
-    for (size_t i = 0; i < num_pages; i++) {
-        struct page *p = (struct page*) (base + i * page_size);
+    int num_pages = size >> MAX_BLOCK_LOG2;
+    for (int i = 0; i < num_pages; i++) {
+        struct page *p = page_index_to_ptr(base, i);
         *tail = p;
         tail = &p->next;
     }
     *tail = NULL;
 
-    alloc->base = base;
-    alloc->lists[INDEX_256B] = NULL;
-    alloc->lists[INDEX_512B] = NULL;
-    alloc->lists[INDEX_1K] = NULL;
-    alloc->lists[INDEX_2K] = NULL;
-    alloc->lists[INDEX_4K] = head;
-    alloc->bitsets = bitsets;
-    alloc->num_bitsets = num_bitsets;
+    assert(info);
+    memset(info, 0, num_info * sizeof(struct page_info));
 
-    for (int i = 0; i < num_bitsets; i++)
-        alloc->bitsets[i] = 0;
+    struct buddy_alloc alloc;
+    alloc.base = base,
+    alloc.info = info;
+    alloc.num_info = num_info;
+    for (int i = 0; i < BUDDY_ALLOC_NUM_LISTS-1; i++)
+        alloc.lists[i] = NULL;
+    alloc.lists[BUDDY_ALLOC_NUM_LISTS-1] = head;
+
+    return alloc;
 }
 
-void free_buddy_alloc(struct buddy_alloc *alloc)
+void buddy_cleanup(struct buddy_alloc *alloc)
 {
     (void) alloc;
 }
@@ -110,43 +276,8 @@ static size_t round_pow2(size_t v)
     return v;
 }
 
-/*
- * Returns the index from the right of the
- * first set bit or -1 otherwise.
- */
-static int first_set_bit(size_t bits)
+static int first_set_8(uint8_t x)
 {
-    // First check that at least one bit is set
-    if (bits == 0) return -1;
-    
-    size_t bits_no_rightmost = bits & (bits - 1);
-    size_t bits_only_rightmost = bits - bits_no_rightmost;
-
-    int index = 0;
-    size_t temp;
-
-    if (sizeof(size_t) > 4) {
-        // The index of the rightmost bit is the log2
-        temp = bits_only_rightmost >> 32;
-        if (temp) {
-            // Bit is in the upper 32 bits
-            index += 32;
-            bits_only_rightmost = temp;
-        }
-    }
-
-    temp = bits_only_rightmost >> 16;
-    if (temp) {
-        index += 16;
-        bits_only_rightmost = temp;
-    }
-
-    temp = bits_only_rightmost >> 8;
-    if (temp) {
-        index += 8;
-        bits_only_rightmost = temp;
-    }
-
     static const unsigned char table[] = {
         0, 0, 1, 0, 2, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0,
         4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -165,297 +296,392 @@ static int first_set_bit(size_t bits)
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     };
-
-    index += table[bits_only_rightmost];
-    
-    return index;
+    return table[x];
 }
 
-void *malloc_internal(struct buddy_alloc *alloc, size_t len)
+// Returns the index from the right of the first set bit or -1 otherwise.
+static int first_set(size_t x)
 {
-    size_t page_size = 1 << 12;
+    size_t y;
+    size_t z;
+    size_t t;
+    int i;
 
-    if (len > page_size)
-        return NULL;
+    // First check that at least one bit is set
+    if (x == 0) return -1;
 
+    y = x & (x - 1);
+    z = x - y;
+    i = 0;
+
+    if (sizeof(size_t) > 4) {
+        t = z >> 32;
+        if (t) {
+            i += 32;
+            z = t;
+        }
+    }
+
+    t = z >> 16;
+    if (t) {
+        i += 16;
+        z = t;
+    }
+
+    t = z >> 8;
+    if (t) {
+        i += 8;
+        z = t;
+    }
+
+    i += first_set_8(z);
+
+    return i;
+}
+
+static size_t page_index(struct buddy_alloc *alloc, void *ptr)
+{
+    uintptr_t x = (uintptr_t) ptr;
+    uintptr_t y = (uintptr_t) alloc->base;
+    assert(x >= y);
+    return (x - y) >> MAX_BLOCK_LOG2;
+}
+
+/*
+        4K ------------------------ 0
+            2K -------------------- 1
+                1K ---------------- 2
+                    512B ---------- 3
+                        256B ------ 4
+                        256B ------ 5
+                    512B ---------- 6
+                        256B ------ 7
+                        256B ------ 8
+                1K ---------------- 9
+                    512B ---------- 10
+                        256B ------ 11
+                        256B ------ 12
+                    512B ---------- 13
+                        256B ------ 14
+                        256B ------ 15
+            2K -------------------- 16
+                1K ---------------- 17
+                    512B ---------- 18
+                        256B ------ 19
+                        256B ------ 20
+                    512B ---------- 21
+                        256B ------ 22
+                        256B ------ 23
+                1K ---------------- 24
+                    512B ---------- 25
+                        256B ------ 26
+                        256B ------ 27
+                    512B ---------- 28
+                        256B ------ 29
+                        256B ------ 30
+*/
+
+static size_t block_info_index(void *ptr, size_t len)
+{
+    int len_log2 = first_set(len);
+    size_t reloff = ((uintptr_t) ptr) & MAX_BLOCK_ALIGN_MASK;
+    return (1U << (MAX_BLOCK_LOG2 - len_log2)) + (reloff >> len_log2);
+}
+
+static bool is_allocated(struct buddy_alloc *alloc,
+                         void *ptr, size_t len)
+{
+    assert(is_pow2(len));
+
+    size_t i = page_index(alloc, ptr);
+    size_t j = block_info_index(ptr, len);
+
+    int bits_per_word_log2 = 5;
+    int bits_per_word = 1 << bits_per_word_log2;
+
+    int u = j >> bits_per_word_log2;
+    int v = j & (bits_per_word - 1);
+
+    uint32_t mask = 1U << v;
+
+    return (alloc->info[i].bits[u] & mask) == mask;
+}
+
+static void set_allocated(struct buddy_alloc *alloc,
+                          void *ptr, size_t len, bool value)
+{
+    assert(is_pow2(len));
+
+    size_t i = page_index(alloc, ptr);
+    size_t j = block_info_index(ptr, len);
+
+    int bits_per_word_log2 = 5;
+    int bits_per_word = 1 << bits_per_word_log2;
+
+    int u = j >> bits_per_word_log2;
+    int v = j & (bits_per_word - 1);
+
+    uint32_t mask = 1U << v;
+    if (value)
+        alloc->info[i].bits[u] |= mask;
+    else
+        alloc->info[i].bits[u] &= ~mask;
+}
+
+static bool
+is_allocated_considering_splits(struct buddy_alloc *alloc,
+                                void *ptr, size_t len)
+{
+    if (len == MIN_BLOCK_SIZE)
+        return is_allocated(alloc, ptr, len);
+
+    char *sib = ptr + (len >> 1);
+    return is_allocated(alloc, ptr, len)
+        || is_allocated_considering_splits(alloc, ptr, len >> 1)
+        || is_allocated_considering_splits(alloc, sib, len >> 1);
+}
+
+static size_t normalize_len(size_t len)
+{
     if (len == 0)
-        return NULL;
+        return 0;
 
-    if (len < 256)
-        len = 256;
-    else {
-        len = round_pow2(len);
-        if (len > page_size)
-            return NULL;
-    }
+    if (len < MIN_BLOCK_SIZE)
+        return MIN_BLOCK_SIZE;
 
-    int i = first_set_bit(len);
-
-    assert(first_set_bit(256) == 8);
-    int list_idx = i - 8;
-
-    struct page *p = alloc->lists[list_idx];
-
-    /*
-     * If there isn't a page of the appropriate size,
-     * allocate a block twice as big, allocate one half
-     * and put the other one in a list.
-     */
-    if (p == NULL) {
-
-        char *ptr = malloc_internal(alloc, len << 1);
-        if (ptr == NULL)
-            return NULL;
-
-        p = (struct page*) ptr;
-        p->next = NULL;
-
-        struct page *p2;
-        p2 = (struct page*) (ptr + len);
-        p2->next = NULL;
-        alloc->lists[list_idx] = p2;
-
-    } else {
-        alloc->lists[list_idx] = p->next;
-    }
-
-    return p;
+    return round_pow2(len);
 }
 
-static void *get_sibling(void *ptr, size_t len)
+static int list_index_for_size(size_t len)
 {
-    size_t double_len = len << 1;
+    return first_set(len) - MIN_BLOCK_LOG2;
+}
 
-    if ((uintptr_t) ptr & (double_len - 1))
+// Get the sibling block of the one at position "ptr". If the block
+// is aligned at double its size, the sibling is "len" bytes after
+// it, else its len bytes before.
+static char *sibling_of(char *ptr, size_t len)
+{
+    assert(is_pow2(len));
+
+    // There is no such thing as a sibling of a page
+    assert(len < MAX_BLOCK_SIZE);
+
+    if (((uintptr_t) ptr & ((len << 1) - 1)) == 0)
         return ptr + len;
     else
         return ptr - len;
 }
 
-static void *parent_chunk(void *ptr, size_t len)
+static char *parent_of(char *ptr, size_t len)
 {
-    void *sib = get_sibling(ptr, len);
+    char *sib = sibling_of(ptr, len);
     if ((uintptr_t) sib < (uintptr_t) ptr)
         return sib;
     else
         return ptr;
 }
 
+static bool
+sibling_allocated_considering_splits(struct buddy_alloc *alloc,
+                  void *ptr, size_t len)
+{
+    char *sib = sibling_of(ptr, len);
+    return is_allocated_considering_splits(alloc, sib, len);
+}
+
 static void
-append_to_list(struct buddy_alloc *alloc,
-               void *ptr, size_t len)
+remove_sibling_from_list(struct buddy_alloc *alloc,
+                         int i, void *ptr)
 {
-    assert(is_pow2(len));
-    assert(len >= 256);
-
-    int list_idx = first_set_bit(len) - 8;
-
-    assert(list_idx >= 0 && list_idx <= INDEX_4K);
-
-    struct page *p = ptr;
-
-    p->next = alloc->lists[list_idx];
-    alloc->lists[list_idx] = p;
+    size_t len = 1U << (i + MIN_BLOCK_LOG2);
+    struct page *sibling = (struct page*) sibling_of(ptr, len);
+    struct page *curs = (struct page*) alloc->lists[i];
+    struct page **prev = (struct page**) &alloc->lists[i];
+    while (curs != (struct page*) sibling) {
+        assert(curs);
+        prev = &curs->next;
+        curs =  curs->next;
+        assert(curs);
+    }
+    assert(sibling == curs);
+    *prev = sibling->next;
 }
 
-void free_internal(struct buddy_alloc *alloc,
-                   void *ptr, size_t len)
+/*
+ * Append the chunk at "ptr" to the i-th list.
+ * The size of the block can be calculated as:
+ * 
+ *     len = 1 << (i + MIN_BLOCK_LOG2)
+ * 
+ */
+static void append(struct buddy_alloc *alloc,
+                   int i, void *ptr)
 {
-    if (len < 256)
-        len = 256;
-    else {
-        if (len > 4096)
-            return;
-        len = round_pow2(len);
-    }
+    assert(i >= 0 && i < BUDDY_ALLOC_NUM_LISTS);
+    
+    struct page *pag = ptr;
 
-    size_t page_size = 1 << 12;
-    assert(len > 0 && len <= page_size);
-
-    if (len == page_size) {
-        /*
-         * Deallocation is easy, just push into
-         * the last list.
-         */
-        append_to_list(alloc, ptr, len);
-        return;
-    }
-
-    /*
-     * Before placing this chunk in the free list
-     * look for its sibling and pop it.
-     * 
-     * If the chunk is aligned to double its size,
-     * its sibling is the one after it, else it's
-     * the one before it.
-     */
-    bool found = false;
-    char *sibling = get_sibling(ptr, len);
-    {
-        int list_idx = first_set_bit(len) - 8;
-        struct page  *curs = (struct page*) alloc->lists[list_idx];
-        struct page **prev = (struct page**) &alloc->lists[list_idx];
-
-        while (curs) {
-            if (curs == (struct page*) sibling) {
-                *prev = curs->next;
-                found = true;
-                break;
-            }
-            prev = &curs->next;
-            curs =  curs->next;
-        }
-    }
-
-    if (found == false) {
-        /*
-         * No sybling so just push this chunk in
-         * the list.
-         */
-        append_to_list(alloc, ptr, len);
-    } else {
-        /*
-         * Deallocate the larger chunk
-         */
-        struct page *p = parent_chunk(ptr, len);
-        free_internal(alloc, p, len << 1);
-    }
+    pag->next = alloc->lists[i];
+    alloc->lists[i] = pag;
 }
 
-uint32_t get_chunk_mask(void *ptr, size_t len)
+static char *pop(struct buddy_alloc *alloc, int i)
 {
-    assert(len > 0);
+    assert(i >= 0 && i < BUDDY_ALLOC_NUM_LISTS);
+    
+    char *ptr = alloc->lists[i];
+    assert(ptr);
 
-    len = round_pow2(len);
-
-    size_t page_size = 1 << 12;
-
-    uintptr_t x = (uintptr_t) ptr;
-
-    /*
-     * Get the bit associated to the chunk
-     *
-     * The first bit refers to the entire page,
-     * the following 2 bits refer to its halfs,
-     * then the following 4 the halfs of the
-     * halfs and so on.
-     */
-
-    int len_log2 = first_set_bit(len);
-    assert(len_log2 <= 12);
-
-    // Pointer relative to its page 
-    size_t reloff = x & (page_size - 1);
-
-    size_t chidx = reloff / len;
-
-    size_t sh = 12 - len_log2 + chidx;
-
-    uint32_t mask = 1;
-    mask <<= sh;
-
-    /*
-     * Each bit is associated to a chunk. Chunk bits are
-     * grouped by their size. The bit index of the first
-     * chunk if its length can be calculated as:
-     * 
-     *     12 - log2(len)
-     *
-     * From there, the bit index is displaced as the chunk
-     * in the page:
-     * 
-     *     12 - log2(len) + (ptr - page_ptr) / len
-     * 
-     * For convenience, here's the list of the bits:
-     * 
-     *      1 - 4K - 2^12 -> 2^0
-     *      2 - 2K - 2^11 -> 2^1
-     *      3 - 2K
-     *      4 - 1K - 2^10 -> 2^2
-     *      5 - 1K
-     *      6 - 1K
-     *      7 - 1K
-     *      8 - 512b - 2^9 -> 2^3
-     *      9 - 512b
-     *     10 - 512b
-     *     11 - 512b
-     *     12 - 512b
-     *     13 - 512b
-     *     14 - 512b
-     *     15 - 512b
-     *     16 - 256b - 2^8 -> 2^4
-     *     17 - 256b
-     *     18 - 256b
-     *     19 - 256b
-     *     20 - 256b
-     *     21 - 256b
-     *     22 - 256b
-     *     23 - 256b
-     *     24 - 256b
-     *     25 - 256b
-     *     26 - 256b
-     *     27 - 256b
-     *     28 - 256b
-     *     29 - 256b
-     *     30 - 256b
-     *     31 - 256b
-     */
-
-    return mask;
-}
-
-void set_chunk_state(struct buddy_alloc *alloc,
-                     void *ptr, size_t len, bool used)
-{
-    len = round_pow2(len);
-
-    size_t page_size = 1 << 12;
-
-    uintptr_t x = (uintptr_t) ptr;
-
-    int page_index = (x - (uintptr_t) alloc->base) / page_size;
-
-    uint32_t mask = get_chunk_mask(ptr, len);
-
-    if (used)
-        alloc->bitsets[page_index] |= mask;
-    else
-        alloc->bitsets[page_index] &= ~mask;
-}
-
-bool get_chunk_state(struct buddy_alloc *alloc,
-                     void *ptr, size_t len)
-{
-    size_t page_size = 1 << 12;
-
-    uintptr_t x = (uintptr_t) ptr;
-
-    int page_index = (x - (uintptr_t) alloc->base) / page_size;
-
-    uint32_t mask = get_chunk_mask(ptr, len);
-
-    return (alloc->bitsets[page_index] & mask) == mask;
+    alloc->lists[i] = ((struct page*) ptr)->next;
+    return ptr;
 }
 
 void *buddy_malloc(struct buddy_alloc *alloc, size_t len)
-{
-    void *ptr = malloc_internal(alloc, len);
-    if (ptr)
-        set_chunk_state(alloc, ptr, len, 1);
+{    
+    if (len == 0 || len > MAX_BLOCK_SIZE) 
+        return NULL;
+    if (alloc->base == NULL)
+        return NULL;
+    len = normalize_len(len);
+
+    // Index of the list of blocks with size "len"
+    int i = list_index_for_size(len);
+
+    // Get the index of the first non-empty list
+    int j = i;
+    while (j < BUDDY_ALLOC_NUM_LISTS && alloc->lists[j] == NULL)
+        j++;
+
+    // If the index went over the list of full pages
+    // then the allocator can't handle this allocation.
+    if (j == BUDDY_ALLOC_NUM_LISTS)
+        return NULL;
+
+    // Pop one block from the non-empty list.
+    char *ptr = pop(alloc, j);
+
+    // If we got a larger block than what we needed,
+    // we need to split it in halfs until we got it
+    // to the right size.
+    // 
+    // We are basically shaving off the last half of
+    // the chunk multiple times, so the block's pointer
+    // doesn't change.
+    while (j > i) {
+        j--;
+        char *sibling = sibling_of(ptr, 1U << (j + MIN_BLOCK_LOG2));
+        append(alloc, j, sibling);
+    }
+
+    set_allocated(alloc, ptr, len, true);
     return ptr;
 }
 
 void buddy_free(struct buddy_alloc *alloc,
-                void *ptr, size_t len)
+                size_t len, void *ptr)
 {
-    if (get_chunk_state(alloc, ptr, len)) {
-        set_chunk_state(alloc, ptr, len, 0);
-        free_internal(alloc, ptr, len);
+    if (ptr == NULL || len == 0) return;
+    if (len > MAX_BLOCK_SIZE) return;
+    len = normalize_len(len);
+
+    if (!is_allocated(alloc, ptr, len))
+        return;
+    set_allocated(alloc, ptr, len, false);
+
+    for (;;) {
+
+        int i = list_index_for_size(len);
+
+        if (len == MAX_BLOCK_SIZE || sibling_allocated_considering_splits(alloc, ptr, len)) {
+            append(alloc, i, ptr);
+            break;
+        }
+
+        assert(alloc->lists[i]);
+        remove_sibling_from_list(alloc, i, ptr);
+
+        ptr = parent_of(ptr, len);
+        len <<= 1;
     }
 }
 
-bool buddy_allocated(struct buddy_alloc *alloc,
-                     void *ptr, size_t len)
+/*
+#define ANSI_COLOR_RED     "\x1b[31m"
+#define ANSI_COLOR_GREEN   "\x1b[32m"
+#define ANSI_COLOR_YELLOW  "\x1b[33m"
+#define ANSI_COLOR_BLUE    "\x1b[34m"
+#define ANSI_COLOR_MAGENTA "\x1b[35m"
+#define ANSI_COLOR_CYAN    "\x1b[36m"
+#define ANSI_COLOR_RESET   "\x1b[0m"
+
+static const char *block_size_label(size_t len)
 {
-    return get_chunk_state(alloc, ptr, len);
+    const char *label = "???";
+    switch (len) {
+        case 1<<12: label = "4K"; break;
+        case 1<<11: label = "2K"; break;
+        case 1<<10: label = "1K"; break;
+        case 1<<9 : label = "512B"; break;
+        case 1<<8 : label = "256B"; break;
+    }
+    return label;
 }
+
+void print_lists(struct buddy_alloc *alloc)
+{
+    for (int i = MIN_BLOCK_LOG2; i <= MAX_BLOCK_LOG2; i++) {
+        fprintf(stderr, "%s = {", block_size_label(1U<<i));
+        struct page *p = alloc->lists[i - MIN_BLOCK_LOG2];
+        while (p) {
+            assert((uintptr_t) p >= (uintptr_t) alloc->base);
+            fprintf(stderr, "%lu", (uintptr_t) p - (uintptr_t) alloc->base);
+            p = p->next;
+            if (p)
+                fprintf(stderr, ", ");
+        }
+        fprintf(stderr, "}\n");
+    }
+}
+
+void buddy_dump(struct buddy_alloc *alloc, FILE *out)
+{
+    fprintf(out, "\n");
+
+    for (int i = 0; i < alloc->num_info; i++) {
+        for (int j = 0; j < 32; j++) {
+            if (alloc->info[i].bits[0] & (1U << j))
+                fprintf(stderr, "1");
+            else
+                fprintf(stderr, "0");
+        }
+        fprintf(stderr, " ");
+    }
+    fprintf(stderr, "\n");
+
+    for (int i = 0; i < alloc->num_info; i++) {
+        char *page = alloc->base + i * MAX_BLOCK_SIZE;
+        for (int j = MAX_BLOCK_LOG2; j >= MIN_BLOCK_LOG2; j--) {
+
+            size_t len = 1U << j;
+
+            const char *label = block_size_label(len);
+
+            for (size_t k = 0; k < MAX_BLOCK_SIZE / len; k++) {
+
+                char *ptr = page + k * len;
+
+                fprintf(out, "%-4lX ", (uintptr_t) ptr - (uintptr_t) alloc->base);
+
+                for (int q = 0; q < MAX_BLOCK_LOG2 - j; q++)
+                    fprintf(out, "  ");
+
+                if (is_allocated(alloc, ptr, len))
+                    fprintf(out, ANSI_COLOR_GREEN "%s - allocated\n" ANSI_COLOR_RESET, label);
+                else
+                    fprintf(out, "%s - free\n", label);
+            }
+        }
+    }
+}
+*/
