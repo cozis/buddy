@@ -547,8 +547,12 @@ void *buddy_malloc(struct buddy_alloc *alloc, size_t len)
 void buddy_free(struct buddy_alloc *alloc,
                 size_t len, void *ptr)
 {
-    if (ptr == NULL || len == 0) return;
-    if (len > MAX_BLOCK_SIZE) return;
+    if (ptr == NULL || len == 0)
+        return;
+
+    if (len > MAX_BLOCK_SIZE)
+        return;
+
     len = normalize_len(len);
 
     if (!is_allocated(alloc, ptr, len))
@@ -571,83 +575,3 @@ void buddy_free(struct buddy_alloc *alloc,
         len <<= 1;
     }
 }
-
-/*
-#define ANSI_COLOR_RED     "\x1b[31m"
-#define ANSI_COLOR_GREEN   "\x1b[32m"
-#define ANSI_COLOR_YELLOW  "\x1b[33m"
-#define ANSI_COLOR_BLUE    "\x1b[34m"
-#define ANSI_COLOR_MAGENTA "\x1b[35m"
-#define ANSI_COLOR_CYAN    "\x1b[36m"
-#define ANSI_COLOR_RESET   "\x1b[0m"
-
-static const char *block_size_label(size_t len)
-{
-    const char *label = "???";
-    switch (len) {
-        case 1<<12: label = "4K"; break;
-        case 1<<11: label = "2K"; break;
-        case 1<<10: label = "1K"; break;
-        case 1<<9 : label = "512B"; break;
-        case 1<<8 : label = "256B"; break;
-    }
-    return label;
-}
-
-void print_lists(struct buddy_alloc *alloc)
-{
-    for (int i = MIN_BLOCK_LOG2; i <= MAX_BLOCK_LOG2; i++) {
-        fprintf(stderr, "%s = {", block_size_label(1U<<i));
-        struct page *p = alloc->lists[i - MIN_BLOCK_LOG2];
-        while (p) {
-            assert((uintptr_t) p >= (uintptr_t) alloc->base);
-            fprintf(stderr, "%lu", (uintptr_t) p - (uintptr_t) alloc->base);
-            p = p->next;
-            if (p)
-                fprintf(stderr, ", ");
-        }
-        fprintf(stderr, "}\n");
-    }
-}
-
-void buddy_dump(struct buddy_alloc *alloc, FILE *out)
-{
-    fprintf(out, "\n");
-
-    for (int i = 0; i < alloc->num_info; i++) {
-        for (int j = 0; j < 32; j++) {
-            if (alloc->info[i].bits[0] & (1U << j))
-                fprintf(stderr, "1");
-            else
-                fprintf(stderr, "0");
-        }
-        fprintf(stderr, " ");
-    }
-    fprintf(stderr, "\n");
-
-    for (int i = 0; i < alloc->num_info; i++) {
-        char *page = alloc->base + i * MAX_BLOCK_SIZE;
-        for (int j = MAX_BLOCK_LOG2; j >= MIN_BLOCK_LOG2; j--) {
-
-            size_t len = 1U << j;
-
-            const char *label = block_size_label(len);
-
-            for (size_t k = 0; k < MAX_BLOCK_SIZE / len; k++) {
-
-                char *ptr = page + k * len;
-
-                fprintf(out, "%-4lX ", (uintptr_t) ptr - (uintptr_t) alloc->base);
-
-                for (int q = 0; q < MAX_BLOCK_LOG2 - j; q++)
-                    fprintf(out, "  ");
-
-                if (is_allocated(alloc, ptr, len))
-                    fprintf(out, ANSI_COLOR_GREEN "%s - allocated\n" ANSI_COLOR_RESET, label);
-                else
-                    fprintf(out, "%s - free\n", label);
-            }
-        }
-    }
-}
-*/
