@@ -155,23 +155,23 @@
 #include <string.h>
 #include <stdbool.h>
 
-#define BUDDY_DEBUG
-#ifdef BUDDY_DEBUG
-#include <stdio.h>
-#endif
-
 #include "buddy.h"
 
+/*
+ * These are just for convenience
+ */
 #define MAX_BLOCK_LOG2 BUDDY_ALLOC_MAX_BLOCK_LOG2
 #define MIN_BLOCK_LOG2 BUDDY_ALLOC_MIN_BLOCK_LOG2
-#define MAX_BLOCK_SIZE (1 << MAX_BLOCK_LOG2)
-#define MIN_BLOCK_SIZE (1 << MIN_BLOCK_LOG2)
+#define MAX_BLOCK_SIZE BUDDY_ALLOC_MAX_BLOCK_LOG2
+#define MIN_BLOCK_SIZE BUDDY_ALLOC_MIN_BLOCK_LOG2
 #define MAX_BLOCK_ALIGN_MASK (MAX_BLOCK_SIZE - 1)
 
-struct page {
-    struct page *next;
-};
+struct page { struct page *next; };
 
+/*
+ * Gets the address of the i-th page of the memory pool.
+ * In this context, a page is a block of size MAX_BLOCK_SIZE.
+ */
 static struct page*
 page_index_to_ptr(char *base, int i)
 {
@@ -189,6 +189,9 @@ static struct buddy_alloc startup_empty()
     return alloc;
 }
 
+/*
+ * See buddy.h
+ */
 struct buddy_alloc buddy_startup(char *base, size_t size,
                                  struct page_info *info,
                                  int num_info)
@@ -197,29 +200,28 @@ struct buddy_alloc buddy_startup(char *base, size_t size,
         return startup_empty();
 
     /*
-     * Ad some padding to the start of the
-     * memory pool to align at a page boundary.
+     * Calculate the padding necessary to align the base pointer
+     * to MAX_BLOCK_SIZE. If the padding is greater than the size
+     * of the pool not even one aligned page was provided so the
+     * allocator is basically empty.
      */
     size_t pad = -(uintptr_t) base & MAX_BLOCK_ALIGN_MASK;
 
-    if (pad > size) {
-        /*
-         * Pool doesn't even have a page
-         */
+    if (pad > size)
         return startup_empty();
-    }
 
     base += pad;
     size -= pad;
 
     /*
-     * Make the size a multiple of 4K
+     * Discard any bites from the end of the pool that don't
+     * make up an entire block.
      */
     size_t rem = size & MAX_BLOCK_ALIGN_MASK;
     size -= rem;
 
     /*
-     * Each page requires a bitset to keep track of its state
+     * Discard blocks for which there isn't a page_info structure.
      */
     size_t max_bytes = (size_t) num_info << MAX_BLOCK_LOG2;
     if (size > max_bytes)
@@ -238,6 +240,10 @@ struct buddy_alloc buddy_startup(char *base, size_t size,
     }
     *tail = NULL;
 
+    /*
+     * Initialize the page info. The page_info bits are 0 when
+     * blocks are unused, so they start at zero.
+     */
     assert(info);
     memset(info, 0, num_info * sizeof(struct page_info));
 
@@ -245,6 +251,8 @@ struct buddy_alloc buddy_startup(char *base, size_t size,
     alloc.base = base,
     alloc.info = info;
     alloc.num_info = num_info;
+
+    // All lists are empty except for the one of larger chunks
     for (int i = 0; i < BUDDY_ALLOC_NUM_LISTS-1; i++)
         alloc.lists[i] = NULL;
     alloc.lists[BUDDY_ALLOC_NUM_LISTS-1] = head;
@@ -252,16 +260,27 @@ struct buddy_alloc buddy_startup(char *base, size_t size,
     return alloc;
 }
 
+/*
+ * See buddy.h
+ */
 void buddy_cleanup(struct buddy_alloc *alloc)
 {
     (void) alloc;
 }
 
+/*
+ * Returns true iff n is a power of 2. To understand how this works,
+ * refer to the comment at start of the file. 
+ */
 static bool is_pow2(size_t n)
 {
     return (n & (n-1)) == 0;
 }
 
+/*
+ * Returns the first power of 2 that comes after v, of v if its
+ * already a power of 2.
+ */
 static size_t round_pow2(size_t v)
 {
     v--;
@@ -276,30 +295,10 @@ static size_t round_pow2(size_t v)
     return v;
 }
 
-static int first_set_8(uint8_t x)
-{
-    static const unsigned char table[] = {
-        0, 0, 1, 0, 2, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0,
-        4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    };
-    return table[x];
-}
-
-// Returns the index from the right of the first set bit or -1 otherwise.
+/*
+ * Returns the index of the first set bit of x. The index of the
+ * least significant bit is 0. If no bit is set, the result is -1.
+ */
 static int first_set(size_t x)
 {
     size_t y;
@@ -310,10 +309,36 @@ static int first_set(size_t x)
     // First check that at least one bit is set
     if (x == 0) return -1;
 
+    // Subtracting 1 from x lowers the less significan bit and
+    // sets all zeros that come before it:
+    //
+    //     x   = 1010 0100
+    //     x-1 = 1010 0011
+    //
+    // So and-ing x and x-1 removes the less significant bit
+    // of x:
+    //
+    //     x         = 1010 0100
+    //     x & (x-1) = 1010 0000
+    //
+    // Subtracting from x its version without the lower bit,
+    // leavs that bit only. 
     y = x & (x - 1);
     z = x - y;
+
+    // At this point z has the less significant bit set only,
+    // and we need to find its index. We do so with a binary
+    // search, which requires a number of "steps" equal to the
+    // log2 of the number of bits in x. Each step consists of
+    // testing the upper half of the bit group and, if the test
+    // is positive and the upper half contains the set bit, add
+    // to the index the half the number of bits of the group
+    // and swap the low half with the high half. This is done
+    // until down to 8 bits. The last byte is done using a table.
     i = 0;
 
+    // The size_t can be 8 or 4 bytes. If it's 8 bytes we need
+    // to do one more step.
     if (sizeof(size_t) > 4) {
         t = z >> 32;
         if (t) {
@@ -334,7 +359,27 @@ static int first_set(size_t x)
         z = t;
     }
 
-    i += first_set_8(z);
+    // Table associating all powers of 2 lower than 256 and their
+    // logarithm, which is also the index of the set bit.
+    static const unsigned char table[] = {
+        0, 0, 1, 0, 2, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0,
+        4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    };
+    i += table[z];
 
     return i;
 }
