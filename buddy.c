@@ -162,8 +162,8 @@
  */
 #define MAX_BLOCK_LOG2 BUDDY_ALLOC_MAX_BLOCK_LOG2
 #define MIN_BLOCK_LOG2 BUDDY_ALLOC_MIN_BLOCK_LOG2
-#define MAX_BLOCK_SIZE BUDDY_ALLOC_MAX_BLOCK_LOG2
-#define MIN_BLOCK_SIZE BUDDY_ALLOC_MIN_BLOCK_LOG2
+#define MAX_BLOCK_SIZE BUDDY_ALLOC_MAX_BLOCK_SIZE
+#define MIN_BLOCK_SIZE BUDDY_ALLOC_MIN_BLOCK_SIZE
 #define MAX_BLOCK_ALIGN_MASK (MAX_BLOCK_SIZE - 1)
 
 struct page { struct page *next; };
@@ -182,6 +182,7 @@ static struct buddy_alloc startup_empty()
 {
     struct buddy_alloc alloc;
     alloc.base = NULL;
+    alloc.size = 0;
     alloc.info = NULL;
     alloc.num_info = 0;
     for (int i = 0; i < BUDDY_ALLOC_NUM_LISTS; i++)
@@ -249,6 +250,7 @@ struct buddy_alloc buddy_startup(char *base, size_t size,
 
     struct buddy_alloc alloc;
     alloc.base = base,
+    alloc.size = size;
     alloc.info = info;
     alloc.num_info = num_info;
 
@@ -426,11 +428,14 @@ static void set_allocated(struct buddy_alloc *alloc,
     size_t i = page_index(alloc, ptr);
     size_t j = block_info_index(ptr, len);
 
-    int bits_per_word_log2 = 5;
-    int bits_per_word = 1 << bits_per_word_log2;
+    size_t bits_per_word_log2 = 5;
+    size_t bits_per_word = 1 << bits_per_word_log2;
 
-    int u = j >> bits_per_word_log2;
-    int v = j & (bits_per_word - 1);
+    size_t u = j >> bits_per_word_log2;
+    size_t v = j & (bits_per_word - 1);
+
+    assert(i < (size_t) alloc->num_info);
+    assert(u < BUDDY_ALLOC_WORDS_PER_PAGE);
 
     uint32_t mask = 1U << v;
     if (value)
@@ -465,7 +470,8 @@ static size_t normalize_len(size_t len)
 
 static int list_index_for_size(size_t len)
 {
-    return first_set(len) - MIN_BLOCK_LOG2;
+    int i = first_set(len);
+    return i - MIN_BLOCK_LOG2;
 }
 
 // Get the sibling block of the one at position "ptr". If the block
@@ -555,9 +561,11 @@ void *buddy_malloc(struct buddy_alloc *alloc, size_t len)
     if (alloc->base == NULL)
         return NULL;
     len = normalize_len(len);
+    assert(len >= MIN_BLOCK_SIZE);
 
     // Index of the list of blocks with size "len"
     int i = list_index_for_size(len);
+    assert(i >= 0 && i < BUDDY_ALLOC_NUM_LISTS);
 
     // Get the index of the first non-empty list
     int j = i;
@@ -619,4 +627,15 @@ void buddy_free(struct buddy_alloc *alloc,
         ptr = parent_of(ptr, len);
         len <<= 1;
     }
+}
+
+bool buddy_owned(struct buddy_alloc *alloc, void *ptr)
+{
+    return (uintptr_t) alloc->base <= (uintptr_t) ptr
+        && (uintptr_t) alloc->base + alloc->size > (uintptr_t) ptr;
+}
+
+bool buddy_allocated(struct buddy_alloc *alloc, void *ptr, size_t len)
+{
+    return buddy_owned(alloc, ptr) && is_allocated(alloc, ptr, len);
 }

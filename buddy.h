@@ -1,5 +1,6 @@
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 /* === INTRODUCTION ===
  * This is the implementation of a general purpose allocator that uses 
@@ -46,6 +47,7 @@ _Static_assert(BUDDY_ALLOC_MIN_BLOCK_LOG2 > 2);
 #define BUDDY_ALLOC_NUM_LISTS (BUDDY_ALLOC_MAX_BLOCK_LOG2 - BUDDY_ALLOC_MIN_BLOCK_LOG2 + 1)
 #define BUDDY_ALLOC_MAX_BLOCK_SIZE (1U << BUDDY_ALLOC_MAX_BLOCK_LOG2)
 #define BUDDY_ALLOC_MIN_BLOCK_SIZE (1U << BUDDY_ALLOC_MIN_BLOCK_LOG2)
+
 /*
  * To keep track of the allocation state of a page,
  * we need one bit for each possible block that can
@@ -66,7 +68,8 @@ struct page_info {
 };
 
 struct buddy_alloc {
-    void *base;
+    void  *base;
+    size_t size;
     void *lists[BUDDY_ALLOC_NUM_LISTS];
     struct page_info *info;
     int num_info;
@@ -106,3 +109,7 @@ void *buddy_malloc(struct buddy_alloc *alloc, size_t len);
  * allocating.
  */
 void buddy_free(struct buddy_alloc *alloc, size_t len, void *ptr);
+
+bool buddy_owned(struct buddy_alloc *alloc, void *ptr);
+
+bool buddy_allocated(struct buddy_alloc *alloc, void *ptr, size_t len);
