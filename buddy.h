@@ -29,20 +29,20 @@
 
 
 /*
- * This is the minimum and maximum block size. The allocator uses free
- * lists to keep track of unused blocks, so a block must be at least
- * the size of a pointer. We assume a pointer is 8 bytes long, so the
- * minimum value must be greater or equal to 3 (log2(8) = 3).
+ * This is the minimum and maximum block size. The allocator uses doubly
+ * linked free lists to keep track of unused blocks, so a block must be
+ * at least the size of two pointers. We assume a pointer is 8 bytes long,
+ * so the minimum value must be greater or equal to 4 (log2(2*8) = 4).
  * 
  * For the maximum value there is really no downside in making it big,
  * except for the fact that the pool provided by the user should at
  * least be that big.
  */
 #define BUDDY_ALLOC_MAX_BLOCK_LOG2 13
-#define BUDDY_ALLOC_MIN_BLOCK_LOG2 3
+#define BUDDY_ALLOC_MIN_BLOCK_LOG2 4
 
 _Static_assert(BUDDY_ALLOC_MIN_BLOCK_LOG2 <= BUDDY_ALLOC_MAX_BLOCK_LOG2);
-_Static_assert(BUDDY_ALLOC_MIN_BLOCK_LOG2 > 2);
+_Static_assert(BUDDY_ALLOC_MIN_BLOCK_LOG2 > 3);
 
 #define BUDDY_ALLOC_NUM_LISTS (BUDDY_ALLOC_MAX_BLOCK_LOG2 - BUDDY_ALLOC_MIN_BLOCK_LOG2 + 1)
 #define BUDDY_ALLOC_MAX_BLOCK_SIZE (1U << BUDDY_ALLOC_MAX_BLOCK_LOG2)
@@ -67,10 +67,15 @@ struct page_info {
     uint32_t bits[BUDDY_ALLOC_WORDS_PER_PAGE];
 };
 
+struct buddy_page {
+    struct buddy_page *prev;
+    struct buddy_page *next;
+};
+
 struct buddy_alloc {
     void  *base;
     size_t size;
-    void *lists[BUDDY_ALLOC_NUM_LISTS];
+    struct buddy_page *lists[BUDDY_ALLOC_NUM_LISTS];
     struct page_info *info;
     int num_info;
 };

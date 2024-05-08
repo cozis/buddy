@@ -166,16 +166,14 @@
 #define MIN_BLOCK_SIZE BUDDY_ALLOC_MIN_BLOCK_SIZE
 #define MAX_BLOCK_ALIGN_MASK (MAX_BLOCK_SIZE - 1)
 
-struct page { struct page *next; };
-
 /*
  * Gets the address of the i-th page of the memory pool.
  * In this context, a page is a block of size MAX_BLOCK_SIZE.
  */
-static struct page*
+static struct buddy_page*
 page_index_to_ptr(char *base, int i)
 {
-    return (struct page*) (base + (i << MAX_BLOCK_LOG2));
+    return (struct buddy_page*) (base + (i << MAX_BLOCK_LOG2));
 }
 
 static struct buddy_alloc startup_empty()
@@ -231,15 +229,23 @@ struct buddy_alloc buddy_startup(char *base, size_t size,
     /*
      * Make the linked list of pages
      */
-    struct page *head = NULL;
-    struct page **tail = &head;
+    struct buddy_page *head = NULL;
+    struct buddy_page *tail = NULL;
     int num_pages = size >> MAX_BLOCK_LOG2;
     for (int i = 0; i < num_pages; i++) {
-        struct page *p = page_index_to_ptr(base, i);
-        *tail = p;
-        tail = &p->next;
+
+        struct buddy_page *p = page_index_to_ptr(base, i);
+
+        if (head) {
+            tail->next = p;
+            p->prev = tail;
+        } else {
+            head = p;
+            p->prev = NULL;
+        }
+        tail = p;
+        p->next = NULL;
     }
-    *tail = NULL;
 
     /*
      * Initialize the page info. The page_info bits are 0 when
@@ -512,17 +518,15 @@ remove_sibling_from_list(struct buddy_alloc *alloc,
                          int i, void *ptr)
 {
     size_t len = 1U << (i + MIN_BLOCK_LOG2);
-    struct page *sibling = (struct page*) sibling_of(ptr, len);
-    struct page *curs = (struct page*) alloc->lists[i];
-    struct page **prev = (struct page**) &alloc->lists[i];
-    while (curs != (struct page*) sibling) {
-        assert(curs);
-        prev = &curs->next;
-        curs =  curs->next;
-        assert(curs);
-    }
-    assert(sibling == curs);
-    *prev = sibling->next;
+    struct buddy_page *sibling = (struct buddy_page*) sibling_of(ptr, len);
+
+    if (sibling->prev)
+        sibling->prev->next = sibling->next;
+    else
+        alloc->lists[i] = sibling->next;
+    
+    if (sibling->next)
+        sibling->next->prev = sibling->prev;
 }
 
 /*
@@ -537,21 +541,29 @@ static void append(struct buddy_alloc *alloc,
 {
     assert(i >= 0 && i < BUDDY_ALLOC_NUM_LISTS);
     
-    struct page *pag = ptr;
+    struct buddy_page *page = ptr;
 
-    pag->next = alloc->lists[i];
-    alloc->lists[i] = pag;
+    if (alloc->lists[i])
+        alloc->lists[i]->prev = page;
+
+    page->prev = NULL;
+    page->next = alloc->lists[i];
+
+    alloc->lists[i] = page;
 }
 
 static char *pop(struct buddy_alloc *alloc, int i)
 {
     assert(i >= 0 && i < BUDDY_ALLOC_NUM_LISTS);
-    
-    char *ptr = alloc->lists[i];
-    assert(ptr);
 
-    alloc->lists[i] = ((struct page*) ptr)->next;
-    return ptr;
+    struct buddy_page *page = alloc->lists[i];
+    assert(page);
+
+    alloc->lists[i] = page->next;
+    if (alloc->lists[i])
+        alloc->lists[i]->prev = NULL;
+
+    return (char*) page;
 }
 
 void *buddy_malloc(struct buddy_alloc *alloc, size_t len)
