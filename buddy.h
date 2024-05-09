@@ -1,3 +1,6 @@
+#ifndef BUDDY_ALLOC_H
+#define BUDDY_ALLOC_H
+
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -127,3 +130,5 @@ bool buddy_owned(struct buddy_alloc *alloc, void *ptr);
  * len is owned by the allocator and marked as allocated.
  */
 bool buddy_allocated(struct buddy_alloc *alloc, void *ptr, size_t len);
+
+#endif
