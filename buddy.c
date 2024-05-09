@@ -1,4 +1,4 @@
-/*
+/* === BIT MAGIC ========================================================
  * Bit stuff required to understand the code:
  *
  *     1. Division and multiplication using shifts
@@ -149,6 +149,119 @@
  *        using a bitwise and:
  * 
  *            delta_from_next_boundart = -x & (boundary - 1)
+ * 
+ * === THE BIT TREE =====================================
+ * The state of each block is tracked by one bit. If the
+ * bit is set, the block is allocated else it is free.
+ * This is necessary to catch any invalid free operations
+ * the user may perform.
+ * 
+ * Blocks are caracterized by their address and length,
+ * so for instance if we consider the block at address P
+ * of size N and the block at the same address P but size
+ * 2N, these two are considered different and therefore
+ * each has its own state bit.
+ * 
+ * It is possible to organize blocks in a binary tree
+ * structure. Since each bit is associated to one and only
+ * one block, the same goes for the bits. This allocator
+ * stores the tree of bits breadth first in the page_info
+ * structures. Each page_info structure holds all the bits
+ * necessary to keep track of the splits of one block with
+ * the maximum size.
+ * 
+ * If this tree thing isn't clear, here is an example:
+ * 
+ *     Lets say the allocator is configured to handle 2 blocks
+ *     of 1024 that can be split up to 2 times:
+ * 
+ *         +-----+-----+-----+-----+-----+-----+-----+-----+
+ *         |         1024          |         1024          |
+ *         +-----+-----+-----+-----+-----+-----+-----+-----+
+ * 
+ *         +-----+-----+-----+-----+-----+-----+-----+-----+
+ *         |    512    |    512    |    512    |    512    |
+ *         +-----+-----+-----+-----+-----+-----+-----+-----+
+ * 
+ *         +-----+-----+-----+-----+-----+-----+-----+-----+
+ *         | 256 | 256 | 256 | 256 | 256 | 256 | 256 | 256 |
+ *         +-----+-----+-----+-----+-----+-----+-----+-----+
+ *
+ *     Don't see the tree yet?
+ *
+ *                  1024               1024
+ *                 /    \             /    \
+ *              512      512       512      512
+ *              / \      / \       / \      / \
+ *            256 256  256 256   256 256  256 256
+ *
+ *     Now about the tree of bits..
+ * 
+ *     The bits are serialized this way:
+ * 
+ *         index  size
+ * 
+ *             1  1K
+ *             2   512
+ *             3   512
+ *             4    256
+ *             5    256
+ *             6    256
+ *             7    256
+ * 
+ *             1  1K
+ *             2   512
+ *             3   512
+ *             4    256
+ *             5    256
+ *             6    256
+ *             7   256
+ *     
+ *     The group of bits of a block are stored breadth first,
+ *     while the groups themselves are stored linearly.
+ * 
+ *     I added 1-based indices within each group to show how
+ *     the first chunk of its size class is always located at
+ *     an index that's a power of 2:
+ * 
+ *         1K  -> 2^0
+ *         512 -> 2^1
+ *         256 -> 2^2
+ * 
+ *     But the block sizes are also powers of 2:
+ * 
+ *         2^10       -> 2^0
+ *         2^(10 - 1) -> 2^1
+ *         2^(10 - 2) -> 2^2
+ * 
+ *     In general the first block of size 2^(10-i) is associated
+ *     to the bit at index 2^i of its group. The 10 is there
+ *     because its the maximum block size log2. By generalizing
+ *     the maximum block size we get this:
+ *  
+ *         2^(max_block_size_log2 - N)  ->  2^N
+ *
+ *     But this only brings us half way, because it gets us the
+ *     bit of the first block of the given size, but not the one
+ *     we need!
+ * 
+ *     The bits of a size class are stored linearly so we just
+ *     need to add the index of the block relative to the start
+ *     of the memory pool. If we are looking for the bit for the
+ *     block at address P of size 2^(max_block_size_log2 - N),
+ *     and the pool starts at address B, then the block index is:
+ * 
+ *         (P - B) / 2^(max_block_size_log2 - N)
+ * 
+ *     So the index of the bit within the group is:
+ * 
+ *         2^(max_block_size_log2 - N)  ->  2^N + (P - B) / 2^(max_block_size_log2 - N)
+ * 
+ *     Since every value here is a power of 2, all divisions,
+ *     logarithms and powers can be evaluated as shifts:
+ * 
+ *         1 << (max_block_size_log2 - N)  ->  (1 << N) + ((P - B) >> (max_block_size_log2 - N))
+ *
  */
 
 #include <assert.h>
@@ -158,7 +271,7 @@
 #include "buddy.h"
 
 /*
- * These are just for convenience
+ * Just for convenience
  */
 #define MAX_BLOCK_LOG2 BUDDY_ALLOC_MAX_BLOCK_LOG2
 #define MIN_BLOCK_LOG2 BUDDY_ALLOC_MIN_BLOCK_LOG2
@@ -407,6 +520,12 @@ static size_t block_info_index(void *ptr, size_t len)
     return (1U << (MAX_BLOCK_LOG2 - len_log2)) + (reloff >> len_log2);
 }
 
+/*
+ * This function checks wether the block (ptr, len)
+ * was marked as allocated.
+ * 
+ * See the set_allocated function
+ */
 static bool is_allocated(struct buddy_alloc *alloc,
                          void *ptr, size_t len)
 {
@@ -426,6 +545,16 @@ static bool is_allocated(struct buddy_alloc *alloc,
     return (alloc->info[i].bits[u] & mask) == mask;
 }
 
+/*
+ * This function marks the block (ptr, len) as allocated.
+ * Note that a block is considered to be different from
+ * its splits. For instance when the block (ptr, len/2)
+ * is marked as allocated, the block (ptr, len) isn't.
+ * 
+ * For more info about how allocation state is tracked,
+ * refer to the explanation THE BIT TREE at the start of
+ * the file.
+ */
 static void set_allocated(struct buddy_alloc *alloc,
                           void *ptr, size_t len, bool value)
 {
@@ -450,6 +579,10 @@ static void set_allocated(struct buddy_alloc *alloc,
         alloc->info[i].bits[u] &= ~mask;
 }
 
+/*
+ * This function returns true if the block (ptr, len)
+ * or any of its splits are marked as allocated.
+ */
 static bool
 is_allocated_considering_splits(struct buddy_alloc *alloc,
                                 void *ptr, size_t len)

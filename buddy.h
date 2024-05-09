@@ -115,6 +115,15 @@ void *buddy_malloc(struct buddy_alloc *alloc, size_t len);
  */
 void buddy_free(struct buddy_alloc *alloc, size_t len, void *ptr);
 
+/*
+ * Returns true if and only if ptr points inside of the memory
+ * generally available for allocation (even if currently marked
+ * as allocated).
+ */
 bool buddy_owned(struct buddy_alloc *alloc, void *ptr);
 
+/*
+ * Returns true if and only if the block at address ptr of size
+ * len is owned by the allocator and marked as allocated.
+ */
 bool buddy_allocated(struct buddy_alloc *alloc, void *ptr, size_t len);
