@@ -56,7 +56,7 @@ int main(void)
         }
     }
 
-    fprintf(stderr, "performed=%lu, expected=%u\n", performed, MAX_ALLOCS);
+    fprintf(stderr, "performed=%d, expected=%d\n", (int) performed, (int) MAX_ALLOCS);
 
     buddy_cleanup(&alloc);
     return 0;

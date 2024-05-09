@@ -46,7 +46,7 @@ int main(void)
                 int i = rand() % num_current_allocs;
                 struct alloc_info deallocating = current_allocs[i];
                 current_allocs[i] = current_allocs[--num_current_allocs];
-                fprintf(stderr, "buddy_free(%lu, %lu)\n", deallocating.len, (uintptr_t) deallocating.ptr - (uintptr_t) alloc.base);
+                fprintf(stderr, "buddy_free(%d, %d)\n", (int) deallocating.len, (int) ((uintptr_t) deallocating.ptr - (uintptr_t) alloc.base));
                 buddy_free(&alloc, deallocating.len, (void*) deallocating.ptr);
             }
         }
@@ -61,7 +61,7 @@ int main(void)
             //fprintf(stderr, "buddy_malloc(%lu) = NULL\n", len);
         } else {
             //buddy_dump(&alloc, stderr);
-            fprintf(stderr, "buddy_malloc(%lu) = %lu\n", len, (uintptr_t) ptr - (uintptr_t) alloc.base);
+            fprintf(stderr, "buddy_malloc(%d) = %d\n", (int) len, (int) ((uintptr_t) ptr - (uintptr_t) alloc.base));
         }
 
         if (ptr != NULL) {
