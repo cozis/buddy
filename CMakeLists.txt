@@ -1,0 +1,31 @@
+cmake_minimum_required(VERSION 3.23)
+project(buddy VERSION 0.0.1 DESCRIPTION "buddy" LANGUAGES C)
+set (CMAKE_C_STANDARD 11)
+
+function(add_warnings target_name)
+    if (MSVC)
+        target_compile_options(${target_name} PRIVATE /W4 /we)
+    else()
+        target_compile_options(${target_name} PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+endfunction()
+
+function(add_O2_flag target_name)
+    if (MSVC)
+        target_compile_options(${target_name} PRIVATE $<$<CONFIG:Release>:/O2>)
+    else()
+        target_compile_options(${target_name} PRIVATE $<$<CONFIG:Release>:-O3>)
+    endif()
+endfunction()
+
+add_executable(test buddy.c test.c)
+add_warnings(test)
+add_O2_flag(test)
+
+add_executable(test2 buddy.c test2.c)
+add_warnings(test2)
+add_O2_flag(test2)
+
+add_executable(example buddy.c example.c)
+add_warnings(example)
+add_O2_flag(example)

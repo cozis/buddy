@@ -585,7 +585,7 @@ static void set_allocated(struct buddy_alloc *alloc,
  */
 static bool
 is_allocated_considering_splits(struct buddy_alloc *alloc,
-                                void *ptr, size_t len)
+                                char *ptr, size_t len)
 {
     if (len == MIN_BLOCK_SIZE)
         return is_allocated(alloc, ptr, len);
