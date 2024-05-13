@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <assert.h>
 
 /* === INTRODUCTION ===
  * This is the implementation of a general purpose allocator that uses 
@@ -44,8 +45,8 @@
 #define BUDDY_ALLOC_MAX_BLOCK_LOG2 13
 #define BUDDY_ALLOC_MIN_BLOCK_LOG2 4
 
-_Static_assert(BUDDY_ALLOC_MIN_BLOCK_LOG2 <= BUDDY_ALLOC_MAX_BLOCK_LOG2);
-_Static_assert(BUDDY_ALLOC_MIN_BLOCK_LOG2 > 3);
+_Static_assert(BUDDY_ALLOC_MIN_BLOCK_LOG2 <= BUDDY_ALLOC_MAX_BLOCK_LOG2, "the max alloc block must be larger than the min alloc block");
+_Static_assert(BUDDY_ALLOC_MIN_BLOCK_LOG2 > 3, "the min block must be at least 8 bytes long");
 
 #define BUDDY_ALLOC_NUM_LISTS (BUDDY_ALLOC_MAX_BLOCK_LOG2 - BUDDY_ALLOC_MIN_BLOCK_LOG2 + 1)
 #define BUDDY_ALLOC_MAX_BLOCK_SIZE (1U << BUDDY_ALLOC_MAX_BLOCK_LOG2)
