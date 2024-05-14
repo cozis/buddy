@@ -270,9 +270,12 @@
 
 #include "buddy.h"
 
-#define BUDDY_ALLOC_NUM_LISTS (BUDDY_ALLOC_MAX_BLOCK_LOG2 - BUDDY_ALLOC_MIN_BLOCK_LOG2 + 1)
-#define BUDDY_ALLOC_MAX_BLOCK_SIZE (1U << BUDDY_ALLOC_MAX_BLOCK_LOG2)
-#define BUDDY_ALLOC_MIN_BLOCK_SIZE (1U << BUDDY_ALLOC_MIN_BLOCK_LOG2)
+#define NUM_LISTS (BUDDY_ALLOC_MAX_BLOCK_LOG2 - BUDDY_ALLOC_MIN_BLOCK_LOG2 + 1)
+#define MAX_BLOCK_SIZE (1U << BUDDY_ALLOC_MAX_BLOCK_LOG2)
+#define MIN_BLOCK_SIZE (1U << BUDDY_ALLOC_MIN_BLOCK_LOG2)
+#define MAX_BLOCK_LOG2 BUDDY_ALLOC_MAX_BLOCK_LOG2
+#define MIN_BLOCK_LOG2 BUDDY_ALLOC_MIN_BLOCK_LOG2
+#define MAX_BLOCK_ALIGN_MASK (MAX_BLOCK_SIZE - 1)
 
 /*
  * To keep track of the allocation state of a page,
@@ -287,10 +290,10 @@
  * times (N=0 means only the entire page can be allocated),
  * then 2^(N+1)-1 bits are necessary.
  */
-#define BUDDY_ALLOC_BITS_PER_PAGE ((1U << (BUDDY_ALLOC_NUM_LISTS)) - 1)
-#define BUDDY_ALLOC_WORDS_PER_PAGE ((BUDDY_ALLOC_BITS_PER_PAGE + 31) / 32)
+#define BIT_TREE_BITS_PER_PAGE ((1U << (NUM_LISTS)) - 1)
+#define BIT_TREE_WORDS_PER_PAGE ((BIT_TREE_BITS_PER_PAGE + 31) / 32)
 struct page_info {
-    uint32_t bits[BUDDY_ALLOC_WORDS_PER_PAGE];
+    uint32_t bits[BIT_TREE_WORDS_PER_PAGE];
 };
 
 struct buddy_page {
@@ -301,19 +304,10 @@ struct buddy_page {
 struct buddy {
     void  *base;
     size_t size;
-    struct buddy_page *lists[BUDDY_ALLOC_NUM_LISTS];
+    struct buddy_page *lists[NUM_LISTS];
     struct page_info *info;
     int num_info;
 };
-
-/*
- * Just for convenience
- */
-#define MAX_BLOCK_LOG2 BUDDY_ALLOC_MAX_BLOCK_LOG2
-#define MIN_BLOCK_LOG2 BUDDY_ALLOC_MIN_BLOCK_LOG2
-#define MAX_BLOCK_SIZE BUDDY_ALLOC_MAX_BLOCK_SIZE
-#define MIN_BLOCK_SIZE BUDDY_ALLOC_MIN_BLOCK_SIZE
-#define MAX_BLOCK_ALIGN_MASK (MAX_BLOCK_SIZE - 1)
 
 void *buddy_get_base(struct buddy *alloc)
 {
@@ -440,9 +434,9 @@ struct buddy *buddy_startup(char *base, size_t size)
     alloc->size = size;
 
     // All lists are empty except for the one of larger chunks
-    for (int i = 0; i < BUDDY_ALLOC_NUM_LISTS-1; i++)
+    for (int i = 0; i < NUM_LISTS-1; i++)
         alloc->lists[i] = NULL;
-    alloc->lists[BUDDY_ALLOC_NUM_LISTS-1] = head;
+    alloc->lists[NUM_LISTS-1] = head;
 
     return alloc;
 }
@@ -627,7 +621,7 @@ static void set_allocated(struct buddy *alloc,
     size_t v = j & (bits_per_word - 1);
 
     assert(i < (size_t) alloc->num_info);
-    assert(u < BUDDY_ALLOC_WORDS_PER_PAGE);
+    assert(u < BIT_TREE_WORDS_PER_PAGE);
 
     uint32_t mask = 1U << v;
     if (value)
@@ -726,7 +720,7 @@ remove_sibling_from_list(struct buddy *alloc, int i, void *ptr)
  */
 static void append(struct buddy *alloc, int i, void *ptr)
 {
-    assert(i >= 0 && i < BUDDY_ALLOC_NUM_LISTS);
+    assert(i >= 0 && i < NUM_LISTS);
     
     struct buddy_page *page = ptr;
 
@@ -741,7 +735,7 @@ static void append(struct buddy *alloc, int i, void *ptr)
 
 static char *pop(struct buddy *alloc, int i)
 {
-    assert(i >= 0 && i < BUDDY_ALLOC_NUM_LISTS);
+    assert(i >= 0 && i < NUM_LISTS);
 
     struct buddy_page *page = alloc->lists[i];
     assert(page);
@@ -766,16 +760,16 @@ void *buddy_malloc(struct buddy *alloc, size_t len)
 
     // Index of the list of blocks with size "len"
     int i = list_index_for_size(len);
-    assert(i >= 0 && i < BUDDY_ALLOC_NUM_LISTS);
+    assert(i >= 0 && i < NUM_LISTS);
 
     // Get the index of the first non-empty list
     int j = i;
-    while (j < BUDDY_ALLOC_NUM_LISTS && alloc->lists[j] == NULL)
+    while (j < NUM_LISTS && alloc->lists[j] == NULL)
         j++;
 
     // If the index went over the list of full pages
     // then the allocator can't handle this allocation.
-    if (j == BUDDY_ALLOC_NUM_LISTS)
+    if (j == NUM_LISTS)
         return NULL;
 
     // Pop one block from the non-empty list.
