@@ -165,8 +165,8 @@
  * It is possible to organize blocks in a binary tree
  * structure. Since each bit is associated to one and only
  * one block, the same goes for the bits. This allocator
- * stores the tree of bits breadth first in the page_info
- * structures. Each page_info structure holds all the bits
+ * stores the tree of bits breadth first in the bit_tree
+ * structures. Each bit_tree structure holds all the bits
  * necessary to keep track of the splits of one block with
  * the maximum size.
  * 
@@ -292,7 +292,7 @@
  */
 #define BIT_TREE_BITS_PER_PAGE ((1U << (NUM_LISTS)) - 1)
 #define BIT_TREE_WORDS_PER_PAGE ((BIT_TREE_BITS_PER_PAGE + 31) / 32)
-struct page_info {
+struct bit_tree {
     uint32_t bits[BIT_TREE_WORDS_PER_PAGE];
 };
 
@@ -305,8 +305,8 @@ struct buddy {
     void  *base;
     size_t size;
     struct buddy_page *lists[NUM_LISTS];
-    struct page_info *info;
-    int num_info;
+    struct bit_tree *trees;
+    int num_trees;
 };
 
 void *buddy_get_base(struct buddy *alloc)
@@ -347,7 +347,7 @@ struct buddy *buddy_startup(char *base, size_t size)
     }
 
     {
-        size_t pad = -(uintptr_t) base & (_Alignof(struct page_info)-1);
+        size_t pad = -(uintptr_t) base & (_Alignof(struct bit_tree)-1);
         if (size < pad)
             return NULL;
         base += pad;
@@ -362,7 +362,7 @@ struct buddy *buddy_startup(char *base, size_t size)
         char  *p = base;
         size_t l = size;
 
-        size_t tree_region = num_trees_maybe * sizeof(struct page_info);
+        size_t tree_region = num_trees_maybe * sizeof(struct bit_tree);
         if (tree_region > l)
             break;
 
@@ -383,12 +383,12 @@ struct buddy *buddy_startup(char *base, size_t size)
         num_trees = num_trees_maybe;
     }
 
-    alloc->info = (struct page_info*) base;
-    alloc->num_info = num_trees;
-    memset(alloc->info, 0, alloc->num_info * sizeof(struct page_info));
+    alloc->trees = (struct bit_tree*) base;
+    alloc->num_trees = num_trees;
+    memset(alloc->trees, 0, alloc->num_trees * sizeof(struct bit_tree));
 
-    base += num_trees * sizeof(struct page_info);
-    size -= num_trees * sizeof(struct page_info);
+    base += num_trees * sizeof(struct bit_tree);
+    size -= num_trees * sizeof(struct bit_tree);
 
     /*
      * Calculate the padding necessary to align the base pointer
@@ -593,7 +593,7 @@ static bool is_allocated(struct buddy *alloc, void *ptr, size_t len)
 
     uint32_t mask = 1U << v;
 
-    return (alloc->info[i].bits[u] & mask) == mask;
+    return (alloc->trees[i].bits[u] & mask) == mask;
 }
 
 /*
@@ -620,14 +620,14 @@ static void set_allocated(struct buddy *alloc,
     size_t u = j >> bits_per_word_log2;
     size_t v = j & (bits_per_word - 1);
 
-    assert(i < (size_t) alloc->num_info);
+    assert(i < (size_t) alloc->num_trees);
     assert(u < BIT_TREE_WORDS_PER_PAGE);
 
     uint32_t mask = 1U << v;
     if (value)
-        alloc->info[i].bits[u] |= mask;
+        alloc->trees[i].bits[u] |= mask;
     else
-        alloc->info[i].bits[u] &= ~mask;
+        alloc->trees[i].bits[u] &= ~mask;
 }
 
 /*
