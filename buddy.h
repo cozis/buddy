@@ -41,94 +41,50 @@
  * except for the fact that the pool provided by the user should at
  * least be that big.
  */
-#define BUDDY_ALLOC_MAX_BLOCK_LOG2 13
+#define BUDDY_ALLOC_MAX_BLOCK_LOG2 12
 #define BUDDY_ALLOC_MIN_BLOCK_LOG2 4
 
 _Static_assert(BUDDY_ALLOC_MIN_BLOCK_LOG2 <= BUDDY_ALLOC_MAX_BLOCK_LOG2);
 _Static_assert(BUDDY_ALLOC_MIN_BLOCK_LOG2 > 3);
 
-#define BUDDY_ALLOC_NUM_LISTS (BUDDY_ALLOC_MAX_BLOCK_LOG2 - BUDDY_ALLOC_MIN_BLOCK_LOG2 + 1)
-#define BUDDY_ALLOC_MAX_BLOCK_SIZE (1U << BUDDY_ALLOC_MAX_BLOCK_LOG2)
-#define BUDDY_ALLOC_MIN_BLOCK_SIZE (1U << BUDDY_ALLOC_MIN_BLOCK_LOG2)
+/*
+ * Handle to the allocator
+ */
+struct buddy;
 
 /*
- * To keep track of the allocation state of a page,
- * we need one bit for each possible block that can
- * be made out of it. For instance, if the page can
- * only be allocated in its entirety, 1 bit is required.
- * If the blocks halfs can be allocated too, 3 bits
- * are required: 1 for the page, 1 for the frist half
- * and 1 for the second half. Allowing the allocation
- * of page quarters requires 4 more bits, for a total
- * of 7. In general, if we allow splitting a page N
- * times (N=0 means only the entire page can be allocated),
- * then 2^(N+1)-1 bits are necessary.
+ * Initialize the allocator. If not enough memory was provided,
+ * NULL is returned. NULL is considered to be a valid allocator
+ * handle, representing the empty allocator.
  */
-#define BUDDY_ALLOC_BITS_PER_PAGE ((1U << (BUDDY_ALLOC_NUM_LISTS)) - 1)
-#define BUDDY_ALLOC_WORDS_PER_PAGE ((BUDDY_ALLOC_BITS_PER_PAGE + 31) / 32)
-struct page_info {
-    uint32_t bits[BUDDY_ALLOC_WORDS_PER_PAGE];
-};
-
-struct buddy_page {
-    struct buddy_page *prev;
-    struct buddy_page *next;
-};
-
-struct buddy_alloc {
-    void  *base;
-    size_t size;
-    struct buddy_page *lists[BUDDY_ALLOC_NUM_LISTS];
-    struct page_info *info;
-    int num_info;
-};
-
-/*
- * Initialize the allocator.
- *
- * The allocator will use as allocation memory the [size]
- * bytes as position [base]. If the memory pool isn't
- * aligned to BUDDY_ALLOC_MAX_BLOCK_SIZE, the first bytes
- * are discarded.
- * 
- * The user needs to provide the allocator with an array
- * of [struct page_info] with a capacity equal to the number
- * of (aligned) BUDDY_ALLOC_MAX_BLOCK_SIZE blocks in the
- * pool. If less page_info structs are provided than necessary
- * for the pool, the exceeding portion of the pool is
- * discarded.
- */
-struct buddy_alloc buddy_startup(char *base, size_t size, struct page_info *page_info, int num_page_info);
-
-/*
- * Deinitialize the allocator.
- */
-void buddy_cleanup(struct buddy_alloc *alloc);
+struct buddy *buddy_startup(char *base, size_t size);
 
 /*
  * Allocate a memory region of size [len]. If allocation
  * fails, NULL is returned.
  */
-void *buddy_malloc(struct buddy_alloc *alloc, size_t len);
+void *buddy_malloc(struct buddy *alloc, size_t len);
 
 /*
  * Deallocate a memory region allocated using [buddy_malloc].
  * The [len] argument must be the same value passed when
  * allocating.
  */
-void buddy_free(struct buddy_alloc *alloc, size_t len, void *ptr);
+void buddy_free(struct buddy *alloc, size_t len, void *ptr);
 
 /*
  * Returns true if and only if ptr points inside of the memory
  * generally available for allocation (even if currently marked
  * as allocated).
  */
-bool buddy_owned(struct buddy_alloc *alloc, void *ptr);
+bool buddy_owned(struct buddy *alloc, void *ptr);
 
 /*
  * Returns true if and only if the block at address ptr of size
  * len is owned by the allocator and marked as allocated.
  */
-bool buddy_allocated(struct buddy_alloc *alloc, void *ptr, size_t len);
+bool buddy_allocated(struct buddy *alloc, void *ptr, size_t len);
+
+void *buddy_get_base(struct buddy *alloc);
 
 #endif

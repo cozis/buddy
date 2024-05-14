@@ -215,7 +215,7 @@
  *             4    256
  *             5    256
  *             6    256
- *             7   256
+ *             7    256
  *     
  *     The group of bits of a block are stored breadth first,
  *     while the groups themselves are stored linearly.
@@ -270,6 +270,42 @@
 
 #include "buddy.h"
 
+#define BUDDY_ALLOC_NUM_LISTS (BUDDY_ALLOC_MAX_BLOCK_LOG2 - BUDDY_ALLOC_MIN_BLOCK_LOG2 + 1)
+#define BUDDY_ALLOC_MAX_BLOCK_SIZE (1U << BUDDY_ALLOC_MAX_BLOCK_LOG2)
+#define BUDDY_ALLOC_MIN_BLOCK_SIZE (1U << BUDDY_ALLOC_MIN_BLOCK_LOG2)
+
+/*
+ * To keep track of the allocation state of a page,
+ * we need one bit for each possible block that can
+ * be made out of it. For instance, if the page can
+ * only be allocated in its entirety, 1 bit is required.
+ * If the blocks halfs can be allocated too, 3 bits
+ * are required: 1 for the page, 1 for the frist half
+ * and 1 for the second half. Allowing the allocation
+ * of page quarters requires 4 more bits, for a total
+ * of 7. In general, if we allow splitting a page N
+ * times (N=0 means only the entire page can be allocated),
+ * then 2^(N+1)-1 bits are necessary.
+ */
+#define BUDDY_ALLOC_BITS_PER_PAGE ((1U << (BUDDY_ALLOC_NUM_LISTS)) - 1)
+#define BUDDY_ALLOC_WORDS_PER_PAGE ((BUDDY_ALLOC_BITS_PER_PAGE + 31) / 32)
+struct page_info {
+    uint32_t bits[BUDDY_ALLOC_WORDS_PER_PAGE];
+};
+
+struct buddy_page {
+    struct buddy_page *prev;
+    struct buddy_page *next;
+};
+
+struct buddy {
+    void  *base;
+    size_t size;
+    struct buddy_page *lists[BUDDY_ALLOC_NUM_LISTS];
+    struct page_info *info;
+    int num_info;
+};
+
 /*
  * Just for convenience
  */
@@ -278,6 +314,11 @@
 #define MAX_BLOCK_SIZE BUDDY_ALLOC_MAX_BLOCK_SIZE
 #define MIN_BLOCK_SIZE BUDDY_ALLOC_MIN_BLOCK_SIZE
 #define MAX_BLOCK_ALIGN_MASK (MAX_BLOCK_SIZE - 1)
+
+void *buddy_get_base(struct buddy *alloc)
+{
+    return alloc->base;
+}
 
 /*
  * Gets the address of the i-th page of the memory pool.
@@ -289,27 +330,71 @@ page_index_to_ptr(char *base, int i)
     return (struct buddy_page*) (base + (i << MAX_BLOCK_LOG2));
 }
 
-static struct buddy_alloc startup_empty()
-{
-    struct buddy_alloc alloc;
-    alloc.base = NULL;
-    alloc.size = 0;
-    alloc.info = NULL;
-    alloc.num_info = 0;
-    for (int i = 0; i < BUDDY_ALLOC_NUM_LISTS; i++)
-        alloc.lists[i] = NULL;
-    return alloc;
-}
-
 /*
  * See buddy.h
  */
-struct buddy_alloc buddy_startup(char *base, size_t size,
-                                 struct page_info *info,
-                                 int num_info)
+struct buddy *buddy_startup(char *base, size_t size)
 {
-    if (base == NULL || info == NULL)
-        return startup_empty();
+    assert((base && size) || (!base && !size));
+
+    struct buddy *alloc;
+    {
+        size_t pad = -(uintptr_t) base & (_Alignof(struct buddy)-1);
+        if (size < pad)
+            return NULL;
+        base += pad;
+        size -= pad;
+
+        if (size < sizeof(struct buddy))
+            return NULL;
+        alloc = (struct buddy*) base;
+        base += sizeof(struct buddy);
+        size -= sizeof(struct buddy);
+    }
+
+    {
+        size_t pad = -(uintptr_t) base & (_Alignof(struct page_info)-1);
+        if (size < pad)
+            return NULL;
+        base += pad;
+        size -= pad;
+    }
+
+    int num_trees = 0;
+    for (;;) {
+
+        int num_trees_maybe = num_trees + 1;
+
+        char  *p = base;
+        size_t l = size;
+
+        size_t tree_region = num_trees_maybe * sizeof(struct page_info);
+        if (tree_region > l)
+            break;
+
+        p += tree_region;
+        l -= tree_region;        
+
+        size_t pad = -(uintptr_t) p & MAX_BLOCK_ALIGN_MASK;
+        if (pad > l)
+            break;
+        p += pad;
+        l -= pad;
+
+        int num_blocks = l >> MAX_BLOCK_LOG2;
+
+        if (num_blocks < num_trees_maybe)
+            break;
+        
+        num_trees = num_trees_maybe;
+    }
+
+    alloc->info = (struct page_info*) base;
+    alloc->num_info = num_trees;
+    memset(alloc->info, 0, alloc->num_info * sizeof(struct page_info));
+
+    base += num_trees * sizeof(struct page_info);
+    size -= num_trees * sizeof(struct page_info);
 
     /*
      * Calculate the padding necessary to align the base pointer
@@ -320,32 +405,23 @@ struct buddy_alloc buddy_startup(char *base, size_t size,
     size_t pad = -(uintptr_t) base & MAX_BLOCK_ALIGN_MASK;
 
     if (pad > size)
-        return startup_empty();
+        return NULL;
 
     base += pad;
     size -= pad;
 
     /*
      * Discard any bites from the end of the pool that don't
-     * make up an entire block.
+     * make up an entire block or that don't have a bit tree
      */
-    size_t rem = size & MAX_BLOCK_ALIGN_MASK;
-    size -= rem;
-
-    /*
-     * Discard blocks for which there isn't a page_info structure.
-     */
-    size_t max_bytes = (size_t) num_info << MAX_BLOCK_LOG2;
-    if (size > max_bytes)
-        size = max_bytes;
+    size = num_trees << MAX_BLOCK_LOG2;
 
     /*
      * Make the linked list of pages
      */
     struct buddy_page *head = NULL;
     struct buddy_page *tail = NULL;
-    int num_pages = size >> MAX_BLOCK_LOG2;
-    for (int i = 0; i < num_pages; i++) {
+    for (int i = 0; i < num_trees; i++) {
 
         struct buddy_page *p = page_index_to_ptr(base, i);
 
@@ -360,33 +436,15 @@ struct buddy_alloc buddy_startup(char *base, size_t size,
         p->next = NULL;
     }
 
-    /*
-     * Initialize the page info. The page_info bits are 0 when
-     * blocks are unused, so they start at zero.
-     */
-    assert(info);
-    memset(info, 0, num_info * sizeof(struct page_info));
-
-    struct buddy_alloc alloc;
-    alloc.base = base,
-    alloc.size = size;
-    alloc.info = info;
-    alloc.num_info = num_info;
+    alloc->base = base,
+    alloc->size = size;
 
     // All lists are empty except for the one of larger chunks
     for (int i = 0; i < BUDDY_ALLOC_NUM_LISTS-1; i++)
-        alloc.lists[i] = NULL;
-    alloc.lists[BUDDY_ALLOC_NUM_LISTS-1] = head;
+        alloc->lists[i] = NULL;
+    alloc->lists[BUDDY_ALLOC_NUM_LISTS-1] = head;
 
     return alloc;
-}
-
-/*
- * See buddy.h
- */
-void buddy_cleanup(struct buddy_alloc *alloc)
-{
-    (void) alloc;
 }
 
 /*
@@ -505,7 +563,7 @@ static int first_set(size_t x)
     return i;
 }
 
-static size_t page_index(struct buddy_alloc *alloc, void *ptr)
+static size_t page_index(struct buddy *alloc, void *ptr)
 {
     uintptr_t x = (uintptr_t) ptr;
     uintptr_t y = (uintptr_t) alloc->base;
@@ -526,8 +584,7 @@ static size_t block_info_index(void *ptr, size_t len)
  * 
  * See the set_allocated function
  */
-static bool is_allocated(struct buddy_alloc *alloc,
-                         void *ptr, size_t len)
+static bool is_allocated(struct buddy *alloc, void *ptr, size_t len)
 {
     assert(is_pow2(len));
 
@@ -555,7 +612,7 @@ static bool is_allocated(struct buddy_alloc *alloc,
  * refer to the explanation THE BIT TREE at the start of
  * the file.
  */
-static void set_allocated(struct buddy_alloc *alloc,
+static void set_allocated(struct buddy *alloc,
                           void *ptr, size_t len, bool value)
 {
     assert(is_pow2(len));
@@ -584,7 +641,7 @@ static void set_allocated(struct buddy_alloc *alloc,
  * or any of its splits are marked as allocated.
  */
 static bool
-is_allocated_considering_splits(struct buddy_alloc *alloc,
+is_allocated_considering_splits(struct buddy *alloc,
                                 void *ptr, size_t len)
 {
     if (len == MIN_BLOCK_SIZE)
@@ -639,16 +696,14 @@ static char *parent_of(char *ptr, size_t len)
 }
 
 static bool
-sibling_allocated_considering_splits(struct buddy_alloc *alloc,
-                  void *ptr, size_t len)
+sibling_allocated_considering_splits(struct buddy *alloc, void *ptr, size_t len)
 {
     char *sib = sibling_of(ptr, len);
     return is_allocated_considering_splits(alloc, sib, len);
 }
 
 static void
-remove_sibling_from_list(struct buddy_alloc *alloc,
-                         int i, void *ptr)
+remove_sibling_from_list(struct buddy *alloc, int i, void *ptr)
 {
     size_t len = 1U << (i + MIN_BLOCK_LOG2);
     struct buddy_page *sibling = (struct buddy_page*) sibling_of(ptr, len);
@@ -669,8 +724,7 @@ remove_sibling_from_list(struct buddy_alloc *alloc,
  *     len = 1 << (i + MIN_BLOCK_LOG2)
  * 
  */
-static void append(struct buddy_alloc *alloc,
-                   int i, void *ptr)
+static void append(struct buddy *alloc, int i, void *ptr)
 {
     assert(i >= 0 && i < BUDDY_ALLOC_NUM_LISTS);
     
@@ -685,7 +739,7 @@ static void append(struct buddy_alloc *alloc,
     alloc->lists[i] = page;
 }
 
-static char *pop(struct buddy_alloc *alloc, int i)
+static char *pop(struct buddy *alloc, int i)
 {
     assert(i >= 0 && i < BUDDY_ALLOC_NUM_LISTS);
 
@@ -699,12 +753,14 @@ static char *pop(struct buddy_alloc *alloc, int i)
     return (char*) page;
 }
 
-void *buddy_malloc(struct buddy_alloc *alloc, size_t len)
-{    
+void *buddy_malloc(struct buddy *alloc, size_t len)
+{   
+    if (alloc == NULL)
+        return NULL;
+ 
     if (len == 0 || len > MAX_BLOCK_SIZE) 
         return NULL;
-    if (alloc->base == NULL)
-        return NULL;
+    
     len = normalize_len(len);
     assert(len >= MIN_BLOCK_SIZE);
 
@@ -742,9 +798,11 @@ void *buddy_malloc(struct buddy_alloc *alloc, size_t len)
     return ptr;
 }
 
-void buddy_free(struct buddy_alloc *alloc,
-                size_t len, void *ptr)
+void buddy_free(struct buddy *alloc, size_t len, void *ptr)
 {
+    if (alloc == NULL)
+        return;
+
     if (ptr == NULL || len == 0)
         return;
 
@@ -774,13 +832,17 @@ void buddy_free(struct buddy_alloc *alloc,
     }
 }
 
-bool buddy_owned(struct buddy_alloc *alloc, void *ptr)
+bool buddy_owned(struct buddy *alloc, void *ptr)
 {
+    if (alloc == NULL)
+        return false;
     return (uintptr_t) alloc->base <= (uintptr_t) ptr
         && (uintptr_t) alloc->base + alloc->size > (uintptr_t) ptr;
 }
 
-bool buddy_allocated(struct buddy_alloc *alloc, void *ptr, size_t len)
+bool buddy_allocated(struct buddy *alloc, void *ptr, size_t len)
 {
+    if (alloc == NULL)
+        return false;
     return buddy_owned(alloc, ptr) && is_allocated(alloc, ptr, len);
 }

@@ -31,8 +31,7 @@ int main(void)
 {
     _Alignas(PAGE_SIZE) char mem[NUM_PAGES * PAGE_SIZE];
     
-    struct page_info info[NUM_PAGES];
-    struct buddy_alloc alloc = buddy_startup(mem, sizeof(mem), info, NUM_PAGES);
+    struct buddy *alloc = buddy_startup(mem, sizeof(mem));
 
     struct alloc_info current_allocs[MAX_ALLOCS];
     int num_current_allocs = 0;
@@ -46,22 +45,22 @@ int main(void)
                 int i = rand() % num_current_allocs;
                 struct alloc_info deallocating = current_allocs[i];
                 current_allocs[i] = current_allocs[--num_current_allocs];
-                fprintf(stderr, "buddy_free(%d, %d)\n", (int) deallocating.len, (int) ((uintptr_t) deallocating.ptr - (uintptr_t) alloc.base));
-                buddy_free(&alloc, deallocating.len, (void*) deallocating.ptr);
+                fprintf(stderr, "buddy_free(%d, %d)\n", (int) deallocating.len, (int) ((uintptr_t) deallocating.ptr - (uintptr_t) buddy_get_base(alloc)));
+                buddy_free(alloc, deallocating.len, (void*) deallocating.ptr);
             }
         }
 
         size_t len = 1 + (rand() % PAGE_SIZE);
         assert(len > 0 && len <= PAGE_SIZE);
 
-        void *ptr = buddy_malloc(&alloc, len);
+        void *ptr = buddy_malloc(alloc, len);
 
         if (ptr == NULL) {
             failed++;
             //fprintf(stderr, "buddy_malloc(%lu) = NULL\n", len);
         } else {
             //buddy_dump(&alloc, stderr);
-            fprintf(stderr, "buddy_malloc(%d) = %d\n", (int) len, (int) ((uintptr_t) ptr - (uintptr_t) alloc.base));
+            fprintf(stderr, "buddy_malloc(%d) = %d\n", (int) len, (int) ((uintptr_t) ptr - (uintptr_t) buddy_get_base(alloc)));
         }
 
         if (ptr != NULL) {
@@ -77,6 +76,5 @@ int main(void)
         }
     }
 
-    buddy_cleanup(&alloc);
     return 0;
 }
